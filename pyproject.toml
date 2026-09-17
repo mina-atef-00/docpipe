@@ -1,0 +1,82 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "docpipe"
+version = "0.1.0"
+description = "Deterministic document ingestion, indexing and retrieval pipeline with a provenance verification gate."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "docpipe contributors" }]
+keywords = ["documents", "indexing", "sqlite", "retrieval", "provenance", "cli"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Text Processing :: Indexing",
+]
+dependencies = [
+    "typer==0.27.2",
+    "fastapi==0.141.1",
+    "pydantic==2.13.5",
+    "uvicorn==0.53.0",
+    "pymupdf==1.28.2",
+    "httpx==0.28.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==9.1.1",
+    "ruff==0.16.8",
+    "mypy==2.3.1",
+]
+
+[project.scripts]
+docpipe = "docpipe.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tools", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "C4", "RUF"]
+ignore = []
+
+[tool.ruff.lint.flake8-bugbear]
+# typer/fastapi call their argument markers in default positions; that is their
+# documented API, not a mutable-default bug.
+extend-immutable-calls = ["typer.Argument", "typer.Option", "fastapi.Query", "fastapi.Path"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.mypy]
+python_version = "3.11"
+files = ["src/docpipe", "tools"]
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+no_implicit_optional = true
+strict_equality = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+disallow_untyped_calls = true
+disallow_untyped_decorators = true
+check_untyped_defs = true
+
+[[tool.mypy.overrides]]
+# pymupdf ships a py.typed marker but incomplete annotations; skip following it
+# so it is treated as Any rather than producing spurious untyped-call errors.
+module = ["pymupdf"]
+follow_imports = "skip"

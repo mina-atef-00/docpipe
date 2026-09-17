@@ -1,0 +1,23 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Pipeline artifacts (generated, never committed)
+corpus/
+manifest.json
+chunks.jsonl
+index.sqlite
+quarantine/
+*.sqlite
+*.sqlite3
+
+# OS / editor noise
+.DS_Store
+*.swp
