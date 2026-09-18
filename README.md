@@ -5,6 +5,7 @@ docpipe walks a directory of text, markdown and PDF files, hashes every file, sp
 ![Python](https://img.shields.io/badge/python-3.10%2B-89b4fa)
 ![License](https://img.shields.io/badge/license-MIT-a6e3a1)
 ![docpipe](https://img.shields.io/badge/docpipe-0.1.0-cba6f7)
+[![CI](https://github.com/mina-atef-00/docpipe/actions/workflows/ci.yml/badge.svg)](https://github.com/mina-atef-00/docpipe/actions/workflows/ci.yml)
 
 ![The whole run: generate the corpus, ingest, parse, index](docs/img/banner-corpus.svg)
 
