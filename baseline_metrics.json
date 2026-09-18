@@ -1,0 +1,8 @@
+{
+  "k": 5,
+  "mode": "hybrid",
+  "n_queries": 14,
+  "recall_at_k": 1.0,
+  "precision_at_k": 0.2,
+  "mrr": 0.910714
+}
