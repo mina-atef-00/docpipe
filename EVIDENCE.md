@@ -393,7 +393,7 @@ EXIT=0
 
 Vector mode (score = 1 - cosine distance) ranks results strictly by
 similarity to the query embedding; the deploy runbook's rollback chunk
-appears at rank 3 with a token match and higher semantic relevance, while
+appears at rank 3, while
 the top hit is the July changelog that shares only loose vocabulary.
 
 ### 8.4 (item 4) Hybrid-mode search, ranking order visible
@@ -459,7 +459,7 @@ precision@5: 0.2
 mrr:           0.910714
   [hit ] rank=1  How do I create a new widget? -> api/widget_api.md
   [hit ] rank=1  How are bearer tokens issued and validated? -> api/auth_api.md
-  ... (same 14 per-query lines as 8.2; no rebuild or code change was needed) ...
+  [ ... 12 more per-query [hit] lines; identical to section 8.2 ... ]
 eval: gate PASS - metrics at or above baseline_metrics.json
 EXIT=0
 ```
@@ -528,8 +528,8 @@ The good index was never touched; no rebuild was needed after the revert.
 
 ### 8.7 (item 7) Full pytest run
 
-Recounting tests enjoys a full verbatim run here (this sits after any code
-edits, so the numbers are the final state):
+A full verbatim pytest run, taken after all the edits above, so the
+numbers are the final state:
 
 ```
 $ pytest
