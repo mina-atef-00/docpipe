@@ -51,6 +51,40 @@ recall@k, precision at k and MRR, and `docpipe query` also has `doc`,
 `list`, `context` and `stats` subcommands. All query paths open the index
 read-only; a query can never mutate the database.
 
+## Grounded answers
+
+`docpipe answer "<question>"` composes an extractive answer from the
+retrieved chunks only: every sentence is quoted verbatim from a chunk and
+carries a `[doc_id:chunk]` citation tracing back to that chunk in the
+index. There is no generation step, so no sentence and no citation can be
+invented. When no retrieved chunk overlaps the query, it refuses:
+
+```
+Refusal: cannot answer from the corpus: no retrieved chunk supports the query.
+```
+
+(exit 1). A real answer on the demo corpus:
+
+```
+$ docpipe answer "How are bearer tokens issued and validated?" --index index.sqlite --mode term --k 3
+answer 'How are bearer tokens issued and validated?':
+All widget endpoints require an `Authorization: Bearer *** header. [9daba2ff6d9e:0]
+Tokens [9daba2ff6d9e:0]
+are issued by the authentication service described in `auth_api. [9daba2ff6d9e:0]
+Invalidates every future token issued to the client by rotating the signing key [7c5fd260c427:1]
+Already issued tokens remain valid until expiry [7c5fd260c427:1]
+The authentication service mints short-lived bearer tokens and validates them. [7c5fd260c427:0]
+It is stateless: tokens carry their own signature and expiry, so no token store [7c5fd260c427:0]
+POST /tokens [7c5fd260c427:0]
+POST /tokens/validate [7c5fd260c427:0]
+answer: grounded in 23 claim(s) across 5 chunk(s)
+```
+
+Every citation `[doc_id:chunk]` resolves to a chunk returned by the
+underlying search, which the test suite asserts (citation sets are a
+subset of retrieval result sets, and every marker appears in the answer
+text).
+
 ## Spec and evidence
 
 The deep technical record lives in `EVIDENCE.md`: the verification

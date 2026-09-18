@@ -274,6 +274,40 @@ eval: gate PASS - metrics at or above baseline_metrics.json
 (`--baseline` overrides the path). Any metric below baseline by more than a
 tiny tolerance prints the regression and exits 1.
 
+## Answer eval
+
+`docpipe answer` is the extractive answer layer on top of search: it
+quotes retrieved chunk sentences verbatim, each with a `[doc_id:chunk]`
+citation to the chunk it came from, and refuses (exit 1) when no
+retrieved chunk supports the query. There is no generation step, so a
+citation cannot exist unless the same chunk was retrieved for the same
+query — the test suite asserts this subset property directly.
+
+`answer` also exposes an answer-level eval (`evaluate_answers`, wired in
+tests): for each labelled query it runs retrieval, records whether the
+answer was grounded or refused, and reports
+
+- `citation_precision` = sentence-level citations whose
+  `(doc_id, chunk_index)` is in the retrieved set / all citations given,
+- `citation_recall` = fraction of labelled queries that produced a
+  grounded answer on the expected document, 0 for refusals,
+- `refusals` = count of queries answered with the refusal message.
+
+Real numbers on the 14-query labelled set (`eval_queries.json`), seeded
+demo corpus, k=5, lexical embedder, mode=term:
+
+```
+term   {'n_queries': 14, 'refusals': 5, 'citation_precision': 0.351852, 'citation_recall': 0.642857}
+hybrid {'n_queries': 14, 'refusals': 5, 'citation_precision': 0.35443,  'citation_recall': 0.642857}
+```
+
+The five refusals are queries whose retrieved chunks do not overlap the
+question's significant tokens enough to support a claim; the answer layer
+refuses rather than quoting weakly related sentences. In the unit suite
+on the small controlled corpus (exact term matches), citation precision
+and recall are both 1.0 with zero refusals
+(`tests/test_answer_eval.py`).
+
 ## Construction caveats
 
 - `architecture.pdf` is not byte-reproducible from the seed (pymupdf
