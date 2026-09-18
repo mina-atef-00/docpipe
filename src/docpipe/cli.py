@@ -7,6 +7,7 @@ from pathlib import Path
 import typer
 
 from . import __version__
+from . import answer as answer_module
 from . import eval as eval_module
 from . import query as query_module
 from . import search as search_module
@@ -349,6 +350,50 @@ def run_eval(
         return
     for regression in regressions:
         typer.echo(f"eval: gate FAIL - {regression}", err=True)
+    raise typer.Exit(1)
+
+
+@app.command()
+def answer(
+    query: str = typer.Argument(..., help="Question to answer from the corpus."),
+    index: Path = typer.Option(Path("index.sqlite"), "--index", help="Index path."),
+    k: int = typer.Option(5, "--k", help="Number of chunks to ground the answer in."),
+    mode: str = typer.Option("hybrid", "--mode", help="Search mode: term, vector or hybrid."),
+    embedding_api_key: str = typer.Option(
+        "",
+        "--embedding-api-key",
+        envvar="DOCPIPE_EMBEDDING_API_KEY",
+        help="API key for the http embedder recorded in the index.",
+    ),
+) -> None:
+    """Compose an extractive answer with [doc:chunk] citations from the corpus.
+
+    Refuses (message 'cannot answer from the corpus', exit code 1) when no
+    retrieved chunk overlaps the query.
+    """
+    if not index.exists():
+        typer.echo(f"answer: error: index not found: {index}", err=True)
+        raise typer.Exit(2)
+    conn = connect_readonly(index)
+    try:
+        if mode in ("vector", "hybrid"):
+            meta = query_module.read_meta(conn)
+            embedder = embedder_from_meta(meta, embedding_api_key)
+        elif mode == "term":
+            embedder = make_local_embedder()
+        else:
+            typer.echo(f"answer: unknown mode '{mode}' (term, vector, hybrid)", err=True)
+            raise typer.Exit(2)
+        result = answer_module.answer(conn, query, embedder, mode=mode, k=k)
+    finally:
+        conn.close()
+    typer.echo(answer_module.render_answer(result))
+    if not result["refused"]:
+        typer.echo(
+            f"answer: grounded in {len(result['citations'])} claim(s) "
+            f"across {len({(c['doc_id'], c['chunk_index']) for c in result['citations']})} chunk(s)"
+        )
+        return
     raise typer.Exit(1)
 
 
