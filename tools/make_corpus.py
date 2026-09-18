@@ -9,6 +9,7 @@ byte, which the determinism tests rely on.
 from __future__ import annotations
 
 import argparse
+import json
 import random
 import sys
 from pathlib import Path
@@ -490,16 +491,77 @@ def generate_corpus(root: Path, seed: int = SEED) -> dict[str, int]:
     return counts
 
 
+def eval_queries() -> list[dict[str, str]]:
+    """Return the deterministic labelled query set for retrieval evaluation.
+
+    Each query is a natural-language question paired with the rel_path of the
+    document that answers it. The set is fixed (no randomness), so the eval
+    baseline is reproducible alongside the corpus.
+    """
+    return [
+        {"query": "How do I create a new widget?", "rel_doc": "api/widget_api.md"},
+        {"query": "How are bearer tokens issued and validated?", "rel_doc": "api/auth_api.md"},
+        {
+            "query": "How does the queue service deliver widget change notifications?",
+            "rel_doc": "api/queue_api.md",
+        },
+        {
+            "query": "What are the rules for a widget name and its labels?",
+            "rel_doc": "specs/data-model.md",
+        },
+        {"query": "What happens when a write request arrives?", "rel_doc": "specs/request-flow.md"},
+        {
+            "query": "In what order do I roll back a deployment?",
+            "rel_doc": "runbooks/deploy-runbook.md",
+        },
+        {
+            "query": "What checks should I run when the widget service returns errors?",
+            "rel_doc": "runbooks/incident-runbook.md",
+        },
+        {
+            "query": "How often should the widget store be backed up?",
+            "rel_doc": "runbooks/backup-runbook.md",
+        },
+        {
+            "query": "What changed in the August 2026 changelog?",
+            "rel_doc": "changelogs/CHANGELOG-2026-08.md",
+        },
+        {
+            "query": "What fixes shipped in the July 2026 patch release?",
+            "rel_doc": "changelogs/CHANGELOG-2026-07.md",
+        },
+        {"query": "What does the widget platform manage?", "rel_doc": "README.md"},
+        {"query": "What does idempotent mean?", "rel_doc": "notes/glossary-copy.txt"},
+        {
+            "query": "Where should I start learning the widget platform?",
+            "rel_doc": "notes/onboarding.txt",
+        },
+        {
+            "query": "What does the architecture overview describe?",
+            "rel_doc": "specs/architecture.pdf",
+        },
+    ]
+
+
+def write_eval_queries(out: Path) -> None:
+    """Write the labelled query set as JSON."""
+    payload = {"queries": eval_queries()}
+    out.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Generate the docpipe corpus.")
     parser.add_argument("--root", type=Path, default=Path("corpus"))
     parser.add_argument("--seed", type=int, default=SEED)
+    parser.add_argument("--queries-out", type=Path, default=Path("eval_queries.json"))
     args = parser.parse_args()
     counts = generate_corpus(args.root, args.seed)
+    write_eval_queries(args.queries_out)
     print(
         f"make_corpus: {counts['documents']} files ({counts['duplicates']} duplicate, "
         f"{counts['pdf']} pdf) -> {args.root}"
     )
+    print(f"make_corpus: {len(eval_queries())} eval queries -> {args.queries_out}")
     return 0
 
 

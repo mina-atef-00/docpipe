@@ -18,6 +18,7 @@ class SearchHit(BaseModel):
     chunk_index: int
     snippet: str
     positions: list[int]
+    score: float | None = None
 
 
 class SearchResponse(BaseModel):

@@ -7,6 +7,8 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Query
 
 from . import query as query_module
+from . import search as search_module
+from .embed import embedder_from_meta
 from .indexer import connect_readonly
 from .schemas import (
     DocumentDetail,
@@ -39,10 +41,16 @@ def create_app(index_path: Path) -> FastAPI:
     def search(
         q: str = Query(..., min_length=1),
         limit: int = Query(20, ge=1, le=100),
+        mode: str = Query("term", pattern="^(term|vector|hybrid)$"),
     ) -> SearchResponse:
         conn = connect_readonly(index_path)
         try:
-            hits = query_module.search(conn, q, limit)
+            if mode == "term":
+                hits = query_module.search(conn, q, limit)
+            else:
+                meta = query_module.read_meta(conn)
+                embedder = embedder_from_meta(meta, "")
+                hits = search_module.run_search(conn, q, mode, embedder, limit)
         finally:
             conn.close()
         return SearchResponse(

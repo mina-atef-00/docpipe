@@ -14,6 +14,7 @@ corpus/
 manifest.json
 chunks.jsonl
 index.sqlite
+eval_queries.json
 quarantine/
 *.sqlite
 *.sqlite3

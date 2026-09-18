@@ -12,9 +12,11 @@ import sqlite3
 from pathlib import Path
 
 from .chunking import tokenize
+from .embed import Embedder, embedder_to_meta, make_local_embedder
 from .hashing import sha256_text
+from .vectors import write_vectors
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA = """
 CREATE TABLE documents (
@@ -104,8 +106,17 @@ def build_index(
     manifest_sha: str,
     chunks_sha: str,
     out_path: Path,
+    *,
+    embedder: Embedder | None = None,
 ) -> dict[str, int]:
-    """Build the index database at *out_path* and return row counts."""
+    """Build the index database at *out_path* and return row counts.
+
+    When *embedder* is omitted the deterministic local lexical embedder is used,
+    so every build records chunk vectors with no network or key. Embeddings are
+    stored in a sqlite-vec virtual table in the same file as the term index.
+    """
+    if embedder is None:
+        embedder = make_local_embedder()
     if out_path.exists():
         out_path.unlink()
     docs = document_rows(manifest)
@@ -130,12 +141,16 @@ def build_index(
             " chunk_count, term_count) VALUES (?,?,?,?,?,?)",
             (rid, manifest_sha, chunks_sha, len(docs), len(chks), len(terms)),
         )
+        vector_chunks = [{"chunk_id": cid, "text": text} for cid, _d, _i, text in chks]
+        vector_count = write_vectors(conn, vector_chunks, embedder)
         conn.executemany(
             "INSERT INTO meta(key, value) VALUES (?,?)",
             sorted(
                 [
                     ("schema_version", str(SCHEMA_VERSION)),
                     ("run_id", rid),
+                    ("vector_count", str(vector_count)),
+                    *embedder_to_meta(embedder),
                 ]
             ),
         )
@@ -147,6 +162,7 @@ def build_index(
         "documents": len(docs),
         "chunks": len(chks),
         "terms": len(terms),
+        "vectors": vector_count,
     }
 
 

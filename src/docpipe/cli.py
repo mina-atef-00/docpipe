@@ -7,7 +7,10 @@ from pathlib import Path
 import typer
 
 from . import __version__
+from . import eval as eval_module
 from . import query as query_module
+from . import search as search_module
+from .embed import Embedder, embedder_from_meta, make_http_embedder, make_local_embedder
 from .hashing import sha256_file
 from .indexer import build_index, connect_readonly
 from .ingest import ingest_corpus, load_manifest, manifest_sha256, write_manifest
@@ -31,6 +34,15 @@ def _main(
     version: bool = typer.Option(False, "--version", callback=_version_callback, is_eager=True),
 ) -> None:
     """docpipe: deterministic ingestion, indexing and retrieval with a provenance gate."""
+
+
+def _resolve_embedder(name: str, base_url: str, api_key: str, model: str) -> Embedder:
+    """Build the embedder requested by CLI flags, failing loudly on a bad config."""
+    if name == "http":
+        return make_http_embedder(base_url=base_url, model=model, api_key=api_key)
+    if name == "local":
+        return make_local_embedder()
+    raise typer.BadParameter(f"unknown embedder '{name}' (expected 'local' or 'http')")
 
 
 @app.command()
@@ -85,16 +97,36 @@ def index(
     manifest: Path = typer.Option(Path("manifest.json"), help="Ingest manifest path."),
     chunks: Path = typer.Option(Path("chunks.jsonl"), help="Chunks input path."),
     out: Path = typer.Option(Path("index.sqlite"), help="Index output path."),
+    embedder: str = typer.Option("local", "--embedder", help="Embedding backend: local or http."),
+    embedding_base_url: str = typer.Option(
+        "",
+        "--embedding-base-url",
+        envvar="DOCPIPE_EMBEDDING_BASE_URL",
+        help="HTTP embedding API base URL.",
+    ),
+    embedding_api_key: str = typer.Option(
+        "",
+        "--embedding-api-key",
+        envvar="DOCPIPE_EMBEDDING_API_KEY",
+        help="HTTP embedding API key.",
+    ),
+    embedding_model: str = typer.Option(
+        "",
+        "--embedding-model",
+        envvar="DOCPIPE_EMBEDDING_MODEL",
+        help="HTTP embedding model name.",
+    ),
 ) -> None:
-    """Build the deterministic SQLite index."""
+    """Build the deterministic SQLite index with chunk embeddings."""
     data = load_manifest(manifest)
     chunk_list = load_chunks(chunks)
     manifest_sha = manifest_sha256(manifest)
     chunks_sha = sha256_file(chunks)
-    counts = build_index(data, chunk_list, manifest_sha, chunks_sha, out)
+    selected = _resolve_embedder(embedder, embedding_base_url, embedding_api_key, embedding_model)
+    counts = build_index(data, chunk_list, manifest_sha, chunks_sha, out, embedder=selected)
     typer.echo(
         f"index: {counts['documents']} documents, {counts['chunks']} chunks, "
-        f"{counts['terms']} terms -> {out}"
+        f"{counts['terms']} terms, {counts['vectors']} vectors ({selected.name}) -> {out}"
     )
 
 
@@ -104,23 +136,41 @@ app.add_typer(query_app, name="query")
 
 @query_app.command("search")
 def query_search(
-    term: str = typer.Argument(..., help="Term to search for."),
+    term: str = typer.Argument(..., help="Query text."),
     index: Path = typer.Option(Path("index.sqlite"), "--index", help="Index path."),
     limit: int = typer.Option(20, help="Maximum number of hits."),
+    mode: str = typer.Option("term", "--mode", help="Search mode: term, vector or hybrid."),
+    embedding_api_key: str = typer.Option(
+        "",
+        "--embedding-api-key",
+        envvar="DOCPIPE_EMBEDDING_API_KEY",
+        help="API key for the http embedder recorded in the index.",
+    ),
 ) -> None:
-    """Search for chunks containing a term."""
+    """Ranked search across the index in term, vector or hybrid mode."""
     conn = connect_readonly(index)
     try:
-        hits = query_module.search(conn, term, limit)
+        if mode in ("vector", "hybrid"):
+            meta = query_module.read_meta(conn)
+            embedder = embedder_from_meta(meta, embedding_api_key)
+            hits = search_module.run_search(conn, term, mode, embedder, limit)
+        elif mode == "term":
+            hits = search_module.term_search(conn, term, limit)
+        else:
+            typer.echo(f"search: unknown mode '{mode}' (term, vector, hybrid)", err=True)
+            raise typer.Exit(2)
     finally:
         conn.close()
     if not hits:
         typer.echo(f"search '{term}': no hits")
         return
-    typer.echo(f"search '{term}': {len(hits)} hit(s)")
+    typer.echo(f"search '{term}' [{mode}]: {len(hits)} hit(s)")
     for hit in hits:
         typer.echo(f"\n{hit['rel_path']}  chunk {hit['chunk_index']}  (doc {hit['doc_id'][:12]})")
-        typer.echo(f"  positions: {hit['positions']}")
+        if mode != "term":
+            typer.echo(f"  score: {hit['score']:.4f}")
+        if hit.get("positions"):
+            typer.echo(f"  positions: {hit['positions']}")
         typer.echo(f"  {hit['snippet']}")
 
 
@@ -245,6 +295,60 @@ def verify(
     typer.echo(f"verify: FAILED - {len(failures)} provenance failure(s):", err=True)
     for failure in failures:
         typer.echo(f"  - {failure}", err=True)
+    raise typer.Exit(1)
+
+
+@app.command("eval")
+def run_eval(
+    index: Path = typer.Option(Path("index.sqlite"), "--index", help="Index path."),
+    queries: Path = typer.Option(
+        Path("eval_queries.json"), "--queries", help="Labelled query set JSON."
+    ),
+    k: int = typer.Option(5, "--k", help="Rank cut-off for recall and precision."),
+    mode: str = typer.Option(
+        "hybrid", "--mode", help="Search mode to evaluate: term, vector or hybrid."
+    ),
+    check: bool = typer.Option(
+        False, "--check", help="Fail (exit 1) when metrics fall below the baseline."
+    ),
+    baseline: Path = typer.Option(
+        Path("baseline_metrics.json"), "--baseline", help="Baseline metrics file."
+    ),
+    embedding_api_key: str = typer.Option(
+        "",
+        "--embedding-api-key",
+        envvar="DOCPIPE_EMBEDDING_API_KEY",
+        help="API key for the http embedder recorded in the index.",
+    ),
+) -> None:
+    """Evaluate ranked retrieval: recall@k, precision@k and mean reciprocal rank."""
+    if not index.exists():
+        typer.echo(f"eval: error: index not found: {index}", err=True)
+        raise typer.Exit(2)
+    if not queries.exists():
+        typer.echo(f"eval: error: query set not found: {queries}", err=True)
+        raise typer.Exit(2)
+    conn = connect_readonly(index)
+    try:
+        meta = query_module.read_meta(conn)
+        embedder = embedder_from_meta(meta, embedding_api_key)
+        labelled = eval_module.load_queries(queries)
+        metrics = eval_module.evaluate(conn, labelled, embedder, k=k, mode=mode)
+    finally:
+        conn.close()
+    typer.echo(eval_module.render_report(metrics))
+    if not check:
+        return
+    if not baseline.exists():
+        typer.echo(f"eval: error: baseline not found: {baseline}", err=True)
+        raise typer.Exit(2)
+    baseline_metrics = eval_module.load_baseline(baseline)
+    passed, regressions = eval_module.check_against_baseline(metrics, baseline_metrics)
+    if passed:
+        typer.echo(f"eval: gate PASS - metrics at or above {baseline}")
+        return
+    for regression in regressions:
+        typer.echo(f"eval: gate FAIL - {regression}", err=True)
     raise typer.Exit(1)
 
 

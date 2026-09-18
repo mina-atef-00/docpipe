@@ -138,3 +138,8 @@ def stats(conn: sqlite3.Connection) -> dict[str, Any]:
         "terms": run["term_count"],
         "run_id": run["run_id"],
     }
+
+
+def read_meta(conn: sqlite3.Connection) -> dict[str, str]:
+    """Return the ``meta`` table as a flat ``{key: value}`` mapping."""
+    return {row["key"]: row["value"] for row in conn.execute("SELECT key, value FROM meta")}

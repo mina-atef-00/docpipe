@@ -25,6 +25,7 @@ dependencies = [
     "uvicorn==0.53.0",
     "pymupdf==1.28.2",
     "httpx==0.28.1",
+    "sqlite-vec==0.1.9",
 ]
 
 [project.optional-dependencies]
@@ -80,3 +81,11 @@ check_untyped_defs = true
 # so it is treated as Any rather than producing spurious untyped-call errors.
 module = ["pymupdf"]
 follow_imports = "skip"
+
+[[tool.mypy.overrides]]
+# sqlite-vec is a C extension with a thin, partially annotated Python wrapper
+# and no py.typed marker; treat it as untyped so docpipe does not inherit its
+# missing annotations.
+module = ["sqlite_vec"]
+follow_imports = "skip"
+ignore_missing_imports = true
