@@ -71,7 +71,7 @@ $ docpipe parse --manifest manifest.json --out chunks.jsonl --corpus corpus
 parse: 16 documents, 22 chunks, 1 pdf, 0 pdf-skipped, 0 empty -> chunks.jsonl
 
 $ docpipe index --manifest manifest.json --chunks chunks.jsonl --out index.sqlite
-index: 16 documents, 22 chunks, 1746 terms -> index.sqlite
+index: 16 documents, 22 chunks, 1746 terms, 22 vectors (hashed-ngram) -> index.sqlite
 ```
 
 ## 4. Verify on a good index (exit 0) and determinism
@@ -84,25 +84,59 @@ EXIT=0
 ```
 
 Determinism check: build the index twice from the same manifest and chunk
-stream, then hash the SQLite `.dump` of each. Matching hashes prove the build is
-byte identical.
+stream, then hash the SQLite `.dump` of each. One practical wrinkle, pasted
+here because it is real output: the dump cannot be read with a plain
+`sqlite3.connect`, because the index contains a vec0 virtual table. Without
+the extension loaded, `iterdump()` raises `no such module: vec0`:
 
 ```
-$ docpipe index --manifest manifest.json --chunks chunks.jsonl --out /tmp/docpipe_a.sqlite
-index: 16 documents, 22 chunks, 1746 terms -> /tmp/docpipe_a.sqlite
-$ docpipe index --manifest manifest.json --chunks chunks.jsonl --out /tmp/docpipe_b.sqlite
-index: 16 documents, 22 chunks, 1746 terms -> /tmp/docpipe_b.sqlite
 $ python - <<'EOF'
 import sqlite3, hashlib
 for p in ['/tmp/docpipe_a.sqlite','/tmp/docpipe_b.sqlite']:
-    c = sqlite3.connect(p)
-    dump = '\n'.join(l for l in c.iterdump())
-    c.close()
+    c = sqlite3.connect(p)  # extension NOT loaded, to show the actual failure
+    try:
+        dump = '\n'.join(l for l in c.iterdump())
+        c.close()
+        print(p, hashlib.sha256(dump.encode()).hexdigest())
+    except Exception as e:
+        print(p, 'ERROR:', e)
+        break
+EOF
+/tmp/docpipe_a.sqlite ERROR: no such module: vec0
+```
+
+With the sqlite-vec extension loaded, the two dumps hash identically:
+
+```
+$ python - <<'EOF'
+import sqlite3, sqlite_vec, hashlib
+for p in ['/tmp/docpipe_a.sqlite','/tmp/docpipe_b.sqlite']:
+    conn = sqlite3.connect(p)
+    conn.enable_load_extension(True)
+    sqlite_vec.load(conn)
+    dump = '\n'.join(l for l in conn.iterdump())
+    conn.close()
     print(p, hashlib.sha256(dump.encode()).hexdigest())
 EOF
-/tmp/docpipe_a.sqlite ba7364962c827b9de52125a76887cf390f965b90b945855586cbecb8aee1ae57
-/tmp/docpipe_b.sqlite ba7364962c827b9de52125a76887cf390f965b90b945855586cbecb8aee1ae57
+/tmp/docpipe_a.sqlite 86e5ca6412fd76f26ca5e6a0095a795f5aabdece83ef8d9a1822da7228556598
+/tmp/docpipe_b.sqlite 86e5ca6412fd76f26ca5e6a0095a795f5aabdece83ef8d9a1822da7228556598
 ```
+
+What this determinism result does and does not cover. The matching dump hashes
+prove the relational layers of the index (documents, chunks, terms, run
+record) build byte identically from the same manifest and chunk stream. The
+vector blobs inside the vec0 virtual table are ordered by chunk_id at insert
+time, which is the mechanism the build uses to keep the vector layer stable,
+but the dump-hash method above does not independently re-check that ordering,
+so the vector layer's determinism is asserted by construction, not by this
+hash. Separately, the PDF input is not deterministic: regenerating the corpus
+from the same seed produces a different `architecture.pdf` file hash on this
+machine (pymupdf embeds metadata at save time). The 14 text and markdown
+corpus files reproduce exactly from seed 20260918. A full rebuild therefore
+reproduces the term layer and every number in sections 3, 5 to 8 and 9, but
+the PDF document's own hash and its chunk's vector do not reproduce, and the
+committed index.sqlite (untracked, gitignored) reflects one particular PDF
+build.
 
 ## 5. Deliberate corruption, then verify (exit non-zero)
 
@@ -137,7 +171,7 @@ $ docpipe query stats --index index.sqlite
 documents: 16
 chunks:    22
 terms:     1746
-run_id:    774613d335ae2cfe6b121836d5fdea8b7059a3d10ebf39acdf97e4c227cd856c
+run_id:    397507a7e5895550891cbe2a2ffdb6576bf56c03ca3831224f0539ac49f5e723
 
 $ docpipe query search widget --index index.sqlite --limit 5
 search 'widget': 5 hit(s)
@@ -235,16 +269,11 @@ in the document fetch.)
 
 ```
 $ python -m pytest -q
-...................................                                      [100%]
-=============================== warnings summary ===============================
-.venv/lib/python3.13/site-packages/fastapi/testclient.py:1
-  StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is
-  deprecated; install `httpx2` instead.
-.venv/lib/python3.13/site-packages/starlette/testclient.py:53
-  DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use
-  anyio.from_thread.BlockingPortal instead.
-35 passed, 2 warnings in 0.31s
+53 passed, 2 warnings in 0.46s
 EXIT=0
+
+(The full verbatim pytest output, including the per-file dots and the two
+upstream starlette deprecation warnings, is pasted in section 8.7 below.)
 
 $ python -m ruff check .
 All checks passed!
@@ -276,7 +305,7 @@ $ curl -s "http://127.0.0.1:8765/search?q=token&limit=2"
 {"query":"token","count":2,"results":[{"doc_id":"7c5fd260c427fa7c676b40760127fbf691a30bf129ecc683309c31ae407ec29e","rel_path":"api/auth_api.md","chunk_index":0,"snippet":"...erence\n\nThe authentication service mints short-lived bearer tokens and validates them.\nIt is stateless: tokens carry their ow...","positions":[26,35,53,87,91]},{"doc_id":"7c5fd260c427fa7c676b40760127fbf691a30bf129ecc683309c31ae407ec29e","rel_path":"api/auth_api.md","chunk_index":1,"snippet":"Returns `200 OK` with the token claims when the signature verifies and the\ntoken has not ex...","positions":[5,13,45,58]}]}
 
 $ curl -s http://127.0.0.1:8765/stats
-{"documents":16,"chunks":22,"terms":1746,"run_id":"774613d335ae2cfe6b121836d5fdea8b7059a3d10ebf39acdf97e4c227cd856c"}
+{"documents":16,"chunks":22,"terms":1746,"run_id":"397507a7e5895550891cbe2a2ffdb6576bf56c03ca3831224f0539ac49f5e723"}
 ```
 
 
@@ -520,7 +549,7 @@ unchanged state (verified with `git diff` showing no drift):
 
 ```
 $ git diff src/docpipe/search.py
-(no output — file is back to its committed state)
+(no output, file is back to its committed state)
 restore clean: EXIT=0
 ```
 
@@ -658,8 +687,9 @@ EXIT=0
 ```
 
 The index itself records `CREATE_VERSION = v0.1.9` inside
-`chunk_vectors_info` — metadata written by the sqlite-vec extension when the
-virtual table was first created — and all 22 rows were inserted through a
+the `chunk_vectors_info` table holds `CREATE_VERSION = v0.1.9`, metadata
+written by the sqlite-vec extension when the virtual table was first created.
+All 22 rows were inserted through a
 vec0 virtual table, which only exists when the extension is loaded. A pure
 fallback (scanning vectors in Python and calling no sqlite-vec SQL at all)
 would not produce a vec0 virtual table, would not write a

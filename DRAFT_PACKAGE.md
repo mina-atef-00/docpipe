@@ -183,7 +183,7 @@ Every item below was run and its output is pasted in `EVIDENCE.md`.
 | 4 | Parse | `docpipe parse ...` | 16 documents, 22 chunks, 1 pdf |
 | 5 | Index build | `docpipe index ...` | 16 documents, 22 chunks, 1746 terms |
 | 6 | Verify, good index | `docpipe verify corpus ...` | exit 0, "OK" |
-| 7 | Determinism | build twice, hash `.dump` | both `ba736496...ae57` |
+| 7 | Determinism | build twice, hash `.dump` | both `86e5ca64...556598` |
 | 8 | Verify, corrupted index | tamper `sha256`, then `verify` | exit 1, 2 failures listed |
 | 9 | Query: search | `docpipe query search widget` | 5 hits with snippets and positions |
 | 10 | Query: doc fetch | `docpipe query doc <sha256>` | metadata plus all chunks |
