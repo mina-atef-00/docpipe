@@ -20,7 +20,9 @@ what a reviewer would challenge.
 │   ├── __main__.py
 │   ├── api.py          # FastAPI service
 │   ├── chunking.py     # deterministic chunking and tokenization
-│   ├── cli.py          # typer CLI (ingest/parse/index/verify/query/api)
+│   ├── cli.py          # typer CLI (ingest/parse/index/verify/query/eval/api)
+│   ├── embed.py        # Embedder protocol, local lexical + HTTP backends
+│   ├── eval.py         # recall@k, precision@k, MRR and the baseline gate
 │   ├── hashing.py      # SHA-256 helpers
 │   ├── indexer.py      # SQLite index build, schema, readonly connect
 │   ├── ingest.py       # corpus walk, hash, dedupe, quarantine
@@ -28,6 +30,8 @@ what a reviewer would challenge.
 │   ├── pathsafety.py   # symlink and traversal guards
 │   ├── query.py        # read-only search/fetch/context/stats
 │   ├── schemas.py      # Pydantic response models
+│   ├── search.py       # term (BM25), vector and hybrid ranking
+│   ├── vectors.py      # sqlite-vec storage and KNN search
 │   └── verify.py       # the provenance gate
 ├── tests/
 │   ├── conftest.py
@@ -36,13 +40,20 @@ what a reviewer would challenge.
 │   ├── test_index.py
 │   ├── test_ingest.py
 │   ├── test_query.py
+│   ├── test_retrieval.py
+│   ├── test_embed.py
 │   └── test_verify.py
 └── tools/make_corpus.py  # seeded corpus generator (committed; output is not)
 ```
 
 Generated artifacts (`corpus/`, `manifest.json`, `chunks.jsonl`, `index.sqlite`,
-`quarantine/`) are gitignored. Total source: 13 modules, 7 test files, 1 tool,
-about 2,400 lines.
+`quarantine/`) are gitignored. Total source: 17 modules, 9 test files, 1 tool,
+about 3,700 lines.
+
+A note on the README copy below: the plain asset count above is current for the
+whole package, but the README text quoted in the next section is the committed
+one, and the committed README now also documents the embedding layer, the three
+search modes, the sqlite-vec vector table, and the retrieval eval command.
 
 ## The README
 
@@ -177,10 +188,14 @@ Every item below was run and its output is pasted in `EVIDENCE.md`.
 | 9 | Query: search | `docpipe query search widget` | 5 hits with snippets and positions |
 | 10 | Query: doc fetch | `docpipe query doc <sha256>` | metadata plus all chunks |
 | 11 | Query: list / context / stats | `query list`, `query context`, `query stats` | 8 docs, chunk window, run_id |
-| 12 | Tests | `pytest -q` | 35 passed, 2 upstream warnings |
+| 12 | Tests | `pytest -q` | 53 passed, 2 upstream warnings |
 | 13 | Lint | `ruff check .`, `ruff format --check .` | clean, 21 files formatted |
 | 14 | Types | `mypy` | clean, 14 source files |
 | 15 | HTTP service | `docpipe api` + curl `/health`, `/search`, `/stats` | real JSON responses |
+| 16 | sqlite-vec load | `sqlite_vec.load(conn)` + `vec_version()` | v0.1.9, 22 rows in `chunk_vectors` |
+| 17 | Eval metrics | `docpipe eval --k 5 --mode hybrid` | recall 1.0, precision 0.2, MRR 0.910714 |
+| 18 | Eval gate pass | `docpipe eval --check` | exit 0, "gate PASS" |
+| 19 | Eval gate fail | `--baseline` with an inflated mrr | exit 1, "gate FAIL - mrr: 0.910714 < baseline 0.99" |
 
 ## Verified working
 
@@ -190,16 +205,46 @@ Every item below was run and its output is pasted in `EVIDENCE.md`.
 - Deterministic rebuild, proven by matching SQLite dump hashes.
 - Read-only query layer (search, fetch, list, context, stats) and the FastAPI
   service, both serving real data.
-- 35 passing tests; ruff and mypy clean.
+- sqlite-vec 0.1.9 loads for real (verified with `vec_version()` returning
+  v0.1.9 and 22 rows present in `chunk_vectors`). It is used by the vector and
+  hybrid search modes, not just declared.
+- Three search modes (term BM25, vector, hybrid) with the hybrid re-ranking
+  formula alpha * vec_norm + (1 - alpha) * term_norm over a min-max normalised
+  candidate pool.
+- Retrieval eval harness runs 14 labelled queries at k=5: recall@5 1.0,
+  precision@5 0.2, MRR 0.910714. The `--check` flag gates against the committed
+  `baseline_metrics.json` and exits 1 on regression; the fail path was also
+  tested by hand with an inflated baseline.
+- 53 passing tests; ruff and mypy clean.
 - PDF extraction via pymupdf (the demo corpus includes one PDF).
 - Symlink/traversal quarantine and UTF-8 validation (covered by tests).
 
 ## Not working / known gaps
 
-- Vector search is not implemented. The allowlist mentions sqlite-vec, but the
-  index is a plain term table with positional postings, no embeddings, no
-  ranking beyond term positions. This is the largest missing capability for a
-  retrieval project.
+- The eval scores are high partly by construction, and this is the big one.
+  The corpus and the labelled query set come from the same seeded generator,
+  so every query shares vocabulary and phrasing with the document it targets.
+  The numbers (recall@5 1.0, precision@5 0.2, MRR 0.910714, all real and
+  reproducible) prove the harness, the ranking pipeline and the regression
+  gate work end to end. They do not demonstrate retrieval quality on real
+  documents or real user questions. The honest next step is an independently
+  written query set, ideally human-written, against a real public corpus.
+- The local deterministic embedder is lexical, not semantic. It hashes word
+  unigrams and character trigrams into a fixed-width projection, so it will
+  miss paraphrases a neural embedding would catch. A query that describes a
+  concept without the document's exact vocabulary will not rank well on the
+  vector side. The HTTP embedder exists as the semantic option but no
+  committed number was produced with it.
+- precision@5 is structurally capped at 0.2 because each query has exactly one
+  expected document. The metric is not wrong, but it carries almost no ranking
+  information in this setup; recall@5 and MRR are the informative ones.
+- The hybrid alpha is hardcoded to 0.5 with no CLI flag or tuning story. The
+  min-max normalisation over a small candidate pool also makes the merged
+  score unstable when the pool is small.
+- Vector and hybrid modes require the sqlite-vec extension at query time and
+  raise rather than degrading to term search. That is deliberate, but it means
+  an index built on a machine without the extension is unusable for those
+  modes.
 - The generator's summary prints "16 files" while 17 files land on disk (16
   unique hashes plus one duplicate pair). Cosmetic, but a reviewer will notice.
 - Two pytest warnings come from upstream Starlette deprecations, not docpipe.
@@ -215,35 +260,53 @@ Every item below was run and its output is pasted in `EVIDENCE.md`.
 ## Proposed GitHub description
 
 > docpipe: a deterministic document ingestion and retrieval pipeline with a
-> provenance verification gate. Ingest, chunk and index a corpus into SQLite,
-> then verify every row traces to a real file and its content hash. Fails
-> loudly instead of silently.
+> provenance verification gate. Ingest, chunk and index a corpus into SQLite
+> with BM25, vector (sqlite-vec) and hybrid search, plus a labelled-query
+> retrieval evaluation harness with a regression gate. Fails loudly instead of
+> silently.
 
 ## Proposed topics
 
-`document-indexing`, `sqlite`, `retrieval`, `provenance`, `data-integrity`,
-`deterministic-build`, `python`, `fastapi`, `cli`, `search`
+`document-indexing`, `sqlite`, `retrieval`, `retrieval-evaluation`,
+`vector-search`, `embeddings`, `bm25`, `sqlite-vec`, `provenance`,
+`data-integrity`, `deterministic-build`, `python`, `fastapi`, `cli`, `search`
 
 ## What a skeptical reviewer would attack
 
-- "This is hashing plus grep." Fair. The retrieval side is a basic inverted
-  term index with no ranking, no fuzzy match and no vector search, so the value
-  proposition rests almost entirely on the verification gate. The gate is real,
-  but a reviewer comparing this to a proper search system will call the query
-  layer thin.
+- "The eval numbers are too good to be true." They are, partly. The corpus and
+  the labelled query set come from the same seeded generator, so the queries
+  share vocabulary and phrasing with the documents they target. Recall@5 1.0
+  and MRR 0.910714 prove the harness, the ranking pipeline and the regression
+  gate work end to end; they do not prove retrieval quality on real documents
+  or real user queries. An independent, human-written query set against a real
+  public corpus is the honest next step, and nothing in the current repo can
+  substitute for it.
+- "This is hashing plus grep." Now a weaker attack, but still fair in spirit.
+  The term side is BM25, there is sqlite-vec with 384-dim chunk embeddings, and
+  hybrid re-ranks a normalised candidate pool. But the embedder is a lexical
+  feature hasher, not a neural model, so the vector side captures surface
+  overlap, not meaning. A reviewer with real IR experience will call the
+  ranking setup introductory-level, and there is no result to show otherwise
+  without an independent benchmark.
 - The determinism claim is strong but narrow. It is proven by hashing the
   SQLite `.dump`, which is reproducible for the tested SQLite build but is not
-  a spec-level guarantee across SQLite versions or platforms.
-- The corpus is 16 synthetic documents. There is no benchmark, no large-corpus
-  test, no performance number, so nothing demonstrates it scales past a toy.
+  a spec-level guarantee across SQLite versions or platforms. The vector table
+  adds a second surface to this: sqlite-vec behaviour would need to hold too.
+- The corpus is 16 synthetic documents, 14 labelled queries. There is no
+  benchmark, no large-corpus test, no performance number, so nothing
+  demonstrates it scales past a toy.
+- precision@k is structurally capped at 0.2 here because each query has one
+  expected document. Presenting it as a headline metric without that context
+  would mislead a reader; the draft keeps it but explains it.
+- Verify and serve are decoupled. The API will happily serve a corrupt index
+  because verification is a separate manual command, not a startup guard.
+- `--exemptions` is a hole in the gate. It prints loudly, but a reviewer will
+  ask why the "no silent path" guarantee has an opt-out at all.
 - The completeness check is one-directional. It confirms every manifest hash is
   indexed, but not that every file on disk is in the manifest. A file added
   after ingest is silently ignored, which is exactly the class of silent
   failure the project claims to solve.
-- `--exemptions` is a hole in the gate. It prints loudly, but a reviewer will
-  ask why the "no silent path" guarantee has an opt-out at all.
-- Verify and serve are decoupled. The API will happily serve a corrupt index
-  because verification is a separate manual command, not a startup guard.
 - Single contributor, alpha status, no published releases. The honest framing
-  is "a focused demonstration of deterministic indexing with a loud provenance
-  gate", not a general search engine.
+  is "a focused demonstration of deterministic indexing, vector retrieval and
+  an eval harness, with a loud provenance gate", not a production search
+  engine.
