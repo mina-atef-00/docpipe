@@ -7,9 +7,11 @@ docpipe walks a directory of text, markdown and PDF files, hashes every file, sp
 ![docpipe](https://img.shields.io/badge/docpipe-0.1.0-cba6f7)
 [![CI](https://github.com/mina-atef-00/docpipe/actions/workflows/ci.yml/badge.svg)](https://github.com/mina-atef-00/docpipe/actions/workflows/ci.yml)
 
-![The whole run: generate the corpus, ingest, parse, index](docs/img/banner-corpus.svg)
-
-![The gate passes, and a real vector search with scores](docs/img/banner-session.svg)
+| ![Plugin in action: skill loaded, live ingest → parse → index](docs/img/in-action-skill-pipeline.svg) | ![Verify gate: OK then FAILED after tampering one stored hash](docs/img/verify-gate.svg) |
+|---|---|
+| Plugin in action — skill loaded, live ingest → parse → index. | Verify gate OK, then FAILED after tampering one stored hash. |
+| ![Grounded answer with citations, then a refusal](docs/img/grounded-answer.svg) | ![Ranked search with real hybrid and vector scores](docs/img/query-scores.svg) |
+| Grounded `answer` with citations, then a refusal on an unanswerable question. | Ranked search with real hybrid and vector scores. |
 
 ## Install
 
