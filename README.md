@@ -11,13 +11,6 @@ docpipe walks a directory of text, markdown and PDF files, hashes every file, sp
 
 ![The gate passes, and a real vector search with scores](docs/img/banner-session.svg)
 
-## 60 seconds
-
-Generate the seeded demo corpus, run the full pipeline, and see the gate pass.
-The demo corpus is a fictional widget platform: API references, specs,
-changelogs and runbooks. No real credentials or endpoints. The generator is
-committed; the files it emits are not.
-
 ## Install
 
 ```
