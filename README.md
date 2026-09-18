@@ -35,12 +35,12 @@ The pipeline runs in four steps:
    unreadable files, unsupported types).
 2. `parse` extracts text and splits it into deterministic chunks. PDFs go
    through pymupdf when it is installed.
-4. `index` builds a SQLite database. Every identifier is content derived and
-   every insert stream is sorted, so building the index twice from the same
-   inputs yields a byte-identical file. The same step also embeds every chunk
-   and writes the vectors into a sqlite-vec table inside the same SQLite file.
-5. `verify` checks the index against the corpus and the ingest manifest, then
-   exits 0 or non-zero.
+3. `index` builds a SQLite database. Every identifier is content derived and
+   every insert stream is sorted, so the relational layers of the index build
+   byte identically from the same inputs. What the determinism check below
+   covers, and what it does not, is stated in that section. The same step also
+   embeds every chunk and writes the vectors into a sqlite-vec table inside
+   the same SQLite file.
 
 There is also a read-only `query` subcommand (search, document fetch, listing,
 chunk context, stats), a retrieval `eval` subcommand, and a small FastAPI
@@ -87,7 +87,7 @@ $ docpipe parse --manifest manifest.json --out chunks.jsonl --corpus corpus
 parse: 16 documents, 22 chunks, 1 pdf, 0 pdf-skipped, 0 empty -> chunks.jsonl
 
 $ docpipe index --manifest manifest.json --chunks chunks.jsonl --out index.sqlite
-index: 16 documents, 22 chunks, 1746 terms -> index.sqlite
+index: 16 documents, 22 chunks, 1746 terms, 22 vectors (hashed-ngram) -> index.sqlite
 
 $ docpipe verify corpus --index index.sqlite --manifest manifest.json
 verify: 16 documents, 22 chunks, 1746 terms
@@ -100,8 +100,8 @@ And when the index is tampered with after the fact:
 $ docpipe verify corpus --index index.sqlite --manifest manifest.json
 verify: 16 documents, 22 chunks, 1746 terms
 verify: FAILED - 2 provenance failure(s):
-  - document README.md: doc_id 6e702aec... != stored sha256 0
-  - document README.md: hash mismatch (stored 0, disk 6e702aec...)
+  - document README.md: doc_id 6e702aec... != stored sha256 000...000
+  - document README.md: hash mismatch (stored 000...000, disk 6e702aec...)
 ```
 
 The full transcript for every step is in `EVIDENCE.md`.
@@ -109,13 +109,27 @@ The full transcript for every step is in `EVIDENCE.md`.
 ## Determinism
 
 Build the index twice from the same manifest and chunk stream and hash the
-SQLite dump of each. The hashes match, which is the concrete proof that the
-build has no wall-clock or insertion-order dependence:
+SQLite dump of each. The two hashes match. One practical detail, because it
+will bite anyone reproducing this: the dump can only be read with the
+sqlite-vec extension loaded, since the index contains a vec0 virtual table.
+Without the extension loaded, `iterdump()` fails with `no such module: vec0`.
+With it loaded, from the 2026-09-18 re-run (EVIDENCE.md has the full command):
 
 ```
-ba7364962c827b9de52125a76887cf390f965b90b945855586cbecb8aee1ae57
-ba7364962c827b9de52125a76887cf390f965b90b945855586cbecb8aee1ae57
+/tmp/docpipe_a.sqlite 86e5ca6412fd76f26ca5e6a0095a795f5aabdece83ef8d9a1822da7228556598
+/tmp/docpipe_b.sqlite 86e5ca6412fd76f26ca5e6a0095a795f5aabdece83ef8d9a1822da7228556598
 ```
+
+Scope of the claim. The matching dump hashes cover the relational layers of
+the index: documents, chunks, terms and the run record. The vector blobs in
+the vec0 table are kept stable by the build's chunk_id insert ordering rather
+than by this hash check, so vector-layer determinism is by construction, not
+independently hashed. And one input is not deterministic at all: regenerating
+the corpus from seed 20260918 reproduces the 14 text and markdown files
+exactly, but `architecture.pdf` hashes differently on every regeneration
+because pymupdf embeds metadata at save time. So a clean-seed rebuild
+reproduces the term layer and every committed eval and query number, but not
+the PDF document's own hash or its chunk's vector.
 
 ## The verification gate
 
@@ -220,22 +234,45 @@ verified directly:
 ```
 $ python - <<'EOF'
 import sqlite3, sqlite_vec
-from importlib.metadata import version
 conn = sqlite3.connect('index.sqlite')
 conn.enable_load_extension(True)
 sqlite_vec.load(conn)
-print(version('sqlite-vec'), sqlite_vec and conn.execute('SELECT count(*) FROM chunk_vectors').fetchone())
+print("vec_version:", conn.execute('select vec_version()').fetchone()[0])
+print("vector rows:", conn.execute('SELECT count(*) FROM chunk_vectors').fetchone())
 EOF
-pip package sqlite-vec: 0.1.9
+vec_version: v0.1.9
 vector rows: (22,)
 ```
 
-`vec_version()` in a fresh connection also reports `v0.1.9`. Then run a vector
-search to confirm the extension does real work at query time:
+Then run a vector search to confirm the extension does real work at query
+time:
 
 ```
-$ docpipe query search "widget authentication" --mode vector --limit 2
-search 'widget authentication' [vector]: 2 hit(s)
+$ docpipe query search "widget authentication" --mode vector --limit 3
+search 'widget authentication' [vector]: 3 hit(s)
+
+api/widget_api.md  chunk 0  (doc 9daba2ff6d9e)
+  score: 0.4924
+  # Widget API reference
+
+## Authentication
+
+All widget endpoi... List widgets
+
+```
+GET /widgets?limit=50&cursor=<opaque>
+```
+
+runbooks/deploy-runbook.md  chunk 1  (doc 2e4d82d9e308)
+  score: 0.4350
+  Roll back in the reverse order: queue, then widget, then aut... be reversed by hand; restore the
+database snapshot instead.
+
+notes/glossary-copy.txt  chunk 0  (doc c2d812d121f2)
+  score: 0.3218
+  Glossary
+
+Bearer token: a short lived credential passed in t...n: a queue delivery target with retry and backoff behaviour.
 ```
 
 and check the meta rows:
@@ -319,6 +356,7 @@ docpipe query stats --index index.sqlite
 ```
 
 All of these open the index read-only. A query can never mutate the database.
+`query stats` from the 2026-09-18 re-run on the freshly built index:
 
 ## The HTTP service
 
@@ -338,8 +376,9 @@ ruff format --check .
 mypy             # type check
 ```
 
-All three are clean on a fresh clone. CI runs them on push and pull request via
-`.github/workflows/ci.yml`.
+All of these are clean on a fresh clone (2026-09-18 re-run: 53 passed,
+All checks passed, 30 files already formatted, no issues found in 18 source
+files). CI runs them on push and pull request via `.github/workflows/ci.yml`.
 
 ## License
 
