@@ -35,14 +35,16 @@ The pipeline runs in four steps:
    unreadable files, unsupported types).
 2. `parse` extracts text and splits it into deterministic chunks. PDFs go
    through pymupdf when it is installed.
-3. `index` builds a SQLite database. Every identifier is content derived and
+4. `index` builds a SQLite database. Every identifier is content derived and
    every insert stream is sorted, so building the index twice from the same
-   inputs yields a byte-identical file.
-4. `verify` checks the index against the corpus and the ingest manifest, then
+   inputs yields a byte-identical file. The same step also embeds every chunk
+   and writes the vectors into a sqlite-vec table inside the same SQLite file.
+5. `verify` checks the index against the corpus and the ingest manifest, then
    exits 0 or non-zero.
 
 There is also a read-only `query` subcommand (search, document fetch, listing,
-chunk context, stats) and a small FastAPI service.
+chunk context, stats), a retrieval `eval` subcommand, and a small FastAPI
+service.
 
 ## Install
 
@@ -152,6 +154,160 @@ meta      (key PK, value)
 doc_id plus chunk index plus chunk text. `run_id` is the SHA-256 of the manifest
 hash plus the chunks hash. Nothing is a sequence number or a timestamp.
 
+## The embedding layer
+
+`index` and `query`/`eval` share one `Embedder` protocol: a backend needs a
+`name`, a `dim`, and `embed`/`embed_one` methods. Two backends exist:
+
+- `hashed-ngram` (default). A deterministic local lexical vectoriser. Word
+  unigrams and character trigrams are feature-hashed through a fixed BLAKE2b
+  projection into 384 dimensions, then L2 normalised. It is a lexical
+  embedding, not a neural one: similar vectors mean surface word and n-gram
+  overlap, not shared meaning. Texts that mean the same thing in different
+  words get different vectors. That is the tradeoff that buys you a build
+  that runs anywhere: no network, no API key, no model download, identical
+  vectors on every machine, so CI and the 53 tests always run.
+- `http`. An OpenAI-compatible `/embeddings` client, selected explicitly with
+  `--embedder http --embedding-base-url ... --embedding-model ...` and a
+  `--embedding-api-key` (or `DOCPIPE_EMBEDDING_API_KEY`). It never falls back
+  to the local backend; a missing key or failed request is a hard error.
+
+An index records which backend built its vectors in the `meta` table, and
+query time rebuilds that same embedder. All committed numbers in this README,
+including the eval metrics below, were produced by the `hashed-ngram` local
+backend.
+
+## Search modes
+
+`docpipe query search <term> [--mode term|vector|hybrid]` offers three modes:
+
+- `term`: BM25 (k1=1.5, b=0.75) over the positional term index. This is the
+  default.
+- `vector`: the query is embedded with the recorded embedder and sqlite-vec
+  returns the nearest chunks by cosine. A hit's `score` is `1 - distance`.
+- `hybrid`: both run, over a candidate pool of the union of the top
+  `4 * limit` chunks from each side, and the pool is re-ranked by
+
+  ```
+  hybrid_score(c) = alpha * vec_norm(c) + (1 - alpha) * term_norm(c)
+  ```
+
+  with `alpha = 0.5`. `vec_norm` and `term_norm` are min-max normalised to
+  `[0, 1]` over the pool. A chunk missing from one side gets the lowest score
+  observed on that side, so a combined match ranks above a lexical-only one.
+
+There is no `--alpha` CLI flag; the value is fixed in `src/docpipe/search.py`.
+
+## Vector storage
+
+Vectors live in the same `index.sqlite` file, in a sqlite-vec virtual table:
+
+```sql
+CREATE VIRTUAL TABLE chunk_vectors USING vec0(
+  embedding float[384] distance_metric=cosine,
+  +chunk_id text
+)
+```
+
+Vectors are inserted in `chunk_id` order so the build stays deterministic. The
+`embedder` and `embed_dim` meta rows record the backend (the committed demo
+index reads `hashed-ngram`, `384`).
+
+An honest verification note: before you trust the "sqlite-vec is a real
+dependency" line, run it yourself. On the committed demo index this was
+verified directly:
+
+```
+$ python - <<'EOF'
+import sqlite3, sqlite_vec
+from importlib.metadata import version
+conn = sqlite3.connect('index.sqlite')
+conn.enable_load_extension(True)
+sqlite_vec.load(conn)
+print(version('sqlite-vec'), sqlite_vec and conn.execute('SELECT count(*) FROM chunk_vectors').fetchone())
+EOF
+pip package sqlite-vec: 0.1.9
+vector rows: (22,)
+```
+
+`vec_version()` in a fresh connection also reports `v0.1.9`. Then run a vector
+search to confirm the extension does real work at query time:
+
+```
+$ docpipe query search "widget authentication" --mode vector --limit 2
+search 'widget authentication' [vector]: 2 hit(s)
+```
+
+and check the meta rows:
+
+```
+$ sqlite3 index.sqlite "SELECT key, value FROM meta WHERE key LIKE 'embed%';"
+embed_dim|384
+embedder|hashed-ngram
+```
+
+(If the extension could not be loaded, the operation raises
+`VectorUnavailableError` rather than falling back to something else.)
+
+## Retrieval eval
+
+`docpipe eval` runs a labelled query set against the index and reports
+recall@k, precision@k and mean reciprocal rank. Each labelled query maps to
+exactly one expected `rel_doc`; a retrieved chunk is relevant when it comes
+from that document. For one relevant document per query and a cut-off k:
+
+- `recall@k` = fraction of queries whose expected document appears in the
+  top-k chunks, i.e. hits / N.
+- `precision@k` = mean over queries of relevant_retrieved / k, i.e. hits /
+  (N * k).
+- `mrr` = mean of 1 / rank of the first chunk from the expected document, 0
+  when it never appears.
+
+How to reproduce the committed numbers:
+
+```
+python tools/make_corpus.py --root corpus --seed 20260918
+docpipe ingest corpus --out manifest.json --quarantine-dir quarantine
+docpipe parse --manifest manifest.json --out chunks.jsonl --corpus corpus
+docpipe index --manifest manifest.json --chunks chunks.jsonl --out index.sqlite
+docpipe eval --index index.sqlite --queries eval_queries.json --k 5 --mode hybrid
+```
+
+Real output of that run (this is the committed baseline in
+`baseline_metrics.json`, produced by the local lexical embedder, hybrid mode,
+k=5, 14 labelled queries):
+
+```
+eval: 14 queries, mode=hybrid, k=5
+recall@5:    1.0
+precision@5: 0.2
+mrr:           0.910714
+  [hit ] rank=1  How do I create a new widget? -> api/widget_api.md
+  [hit ] rank=1  How are bearer tokens issued and validated? -> api/auth_api.md
+  ...
+  [hit ] rank=4  What does idempotent mean? -> notes/glossary-copy.txt
+exit=0
+```
+
+About that 0.2: it is the metric definition working, not a retrieval failure.
+The labelled set has one expected document per query, so at most one of the
+five returned chunks can be relevant. `precision@5` is therefore structurally
+capped at 1/5 = 0.2 per query even when ranking is perfect, and the corpus
+meets that cap on every query. Read recall@k and MRR for quality here;
+precision@k would only become meaningful with multi-document relevance labels.
+
+The regression gate:
+
+```
+$ docpipe eval --index index.sqlite --queries eval_queries.json --check
+eval: gate PASS - metrics at or above baseline_metrics.json
+```
+
+`--check` compares the three metrics against `baseline_metrics.json`
+(`--baseline` overrides the path). Any metric below baseline by more than a
+tiny tolerance prints the regression and exits 1, so a ranking change that
+breaks the harness fails CI.
+
 ## The query layer
 
 ```
@@ -176,7 +332,7 @@ See `EVIDENCE.md` for a real request and response.
 ## Development
 
 ```
-pytest -q        # 35 tests
+pytest -q        # 53 tests
 ruff check .     # lint
 ruff format --check .
 mypy             # type check
