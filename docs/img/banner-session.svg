@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.0//EN" "http://www.w3.org/TR/2001/REC-SVG-20010904/DTD/svg10.dtd">
-<svg width="776.67" height="134.00" xmlns="http://www.w3.org/2000/svg">
+<svg width="776.67" height="369.00" xmlns="http://www.w3.org/2000/svg">
 <style>
 @font-face {
 	font-family: &apos;JetBrains Mono&apos;;
@@ -8,8 +8,8 @@
 	font-weight: normal;
 	font-style: normal;
 }
-</style><rect width="776.67" height="134.00" fill="#1e1e2e" x="0.00px" y="0.00px"/>
+</style><rect width="776.67" height="369.00" fill="#1e1e2e" x="0.00px" y="0.00px"/>
 <g font-family="JetBrains Mono" font-size="14.00px" fill="#cdd6f4" clip-path="url(#terminalMask)">
-<text x="20.00px" y="36.80px" xml:space="preserve"><tspan xml:space="preserve">ingest: 17 files (16 unique, 1 duplicates), 0 quarantined, 0 skipped</tspan></text><text x="20.00px" y="53.60px" xml:space="preserve"><tspan xml:space="preserve">ingest: manifest -&gt; manifest.json</tspan></text><text x="20.00px" y="70.40px" xml:space="preserve"><tspan xml:space="preserve">parse: 16 documents, 22 chunks, 1 pdf, 0 pdf-skipped, 0 empty -&gt; chunks.jsonl</tspan></text><text x="20.00px" y="87.20px" xml:space="preserve"><tspan xml:space="preserve">index: 16 documents, 22 chunks, 1746 terms, 22 vectors (hashed-ngram) -&gt; index.sqlite</tspan></text>
+<text x="20.00px" y="36.80px" xml:space="preserve"><tspan xml:space="preserve">ingest: 17 files (16 unique, 1 duplicates), 0 quarantined, 0 skipped</tspan></text><text x="20.00px" y="53.60px" xml:space="preserve"><tspan xml:space="preserve">ingest: manifest -&gt; manifest.json</tspan></text><text x="20.00px" y="70.40px" xml:space="preserve"><tspan xml:space="preserve">parse: 16 documents, 22 chunks, 1 pdf, 0 pdf-skipped, 0 empty -&gt; chunks.jsonl</tspan></text><text x="20.00px" y="87.20px" xml:space="preserve"><tspan xml:space="preserve">index: 16 documents, 22 chunks, 1746 terms, 22 vectors (hashed-ngram) -&gt; index.sqlite</tspan></text><text x="20.00px" y="104.00px" xml:space="preserve"><tspan xml:space="preserve">verify: 16 documents, 22 chunks, 1746 terms</tspan></text><text x="20.00px" y="120.80px" xml:space="preserve"><tspan xml:space="preserve">verify: OK - every index row traces to a source file and its hash</tspan></text><text x="20.00px" y="137.60px" xml:space="preserve"><tspan xml:space="preserve">search &apos;widget quota api&apos; [vector]: 20 hit(s)</tspan></text><text x="20.00px" y="154.40px" xml:space="preserve"/><text x="20.00px" y="171.20px" xml:space="preserve"><tspan xml:space="preserve">docs.md  chunk 0  (doc 5ede48b47df0)</tspan></text><text x="20.00px" y="188.00px" xml:space="preserve"><tspan xml:space="preserve">  score: 0.3665</tspan></text><text x="20.00px" y="204.80px" xml:space="preserve"><tspan xml:space="preserve">  # Documents</tspan></text><text x="20.00px" y="221.60px" xml:space="preserve"/><text x="20.00px" y="238.40px" xml:space="preserve"><tspan xml:space="preserve">- [Widget API](api/widget_api.md)</tspan></text><text x="20.00px" y="255.20px" xml:space="preserve"><tspan xml:space="preserve">- [Authentica...t-runbook.md)</tspan></text><text x="20.00px" y="272.00px" xml:space="preserve"><tspan xml:space="preserve">- [Backup runbook](runbooks/backup-runbook.md)</tspan></text><text x="20.00px" y="288.80px" xml:space="preserve"/><text x="20.00px" y="305.60px" xml:space="preserve"><tspan xml:space="preserve">specs/architecture.pdf  chunk 0  (doc 49801c802b8b)</tspan></text><text x="20.00px" y="322.40px" xml:space="preserve"><tspan xml:space="preserve">  score: 0.3255</tspan></text>
 </g>
 </svg>

@@ -6,20 +6,13 @@ docpipe walks a directory of text, markdown and PDF files, hashes every file, sp
 ![License](https://img.shields.io/badge/license-MIT-a6e3a1)
 ![docpipe](https://img.shields.io/badge/docpipe-0.1.0-cba6f7)
 
+![The whole run: generate the corpus, ingest, parse, index](docs/img/banner-corpus.svg)
+
+![The gate passes, and a real vector search with scores](docs/img/banner-session.svg)
+
 ## 60 seconds
 
-Generate the seeded demo corpus, run the full pipeline, and see the gate pass:
-
-![ingest, parse and index](docs/img/pipeline.svg)
-
-The gate. This is the line the whole tool exists to produce:
-
-![verify](docs/img/verify-gate.svg)
-
-And one real search, vector mode over the same index:
-
-![search](docs/img/search.svg)
-
+Generate the seeded demo corpus, run the full pipeline, and see the gate pass.
 The demo corpus is a fictional widget platform: API references, specs,
 changelogs and runbooks. No real credentials or endpoints. The generator is
 committed; the files it emits are not.
