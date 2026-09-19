@@ -1,0 +1,23 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "docpipe",
+  "version": "0.1.0",
+  "description": "Verifiable document retrieval: drives the docpipe CLI over your own corpus (ingest, parse, index, verify, search, answer, eval) and exposes its provenance gate, which fails loudly when an index row cannot be traced back to a real file on disk.",
+  "author": {
+    "name": "Mina Atef",
+    "url": "https://github.com/mina-atef-00"
+  },
+  "homepage": "https://github.com/mina-atef-00/docpipe",
+  "repository": "https://github.com/mina-atef-00/docpipe",
+  "license": "MIT",
+  "keywords": [
+    "retrieval",
+    "documents",
+    "search",
+    "sqlite",
+    "provenance",
+    "verification",
+    "cli",
+    "mcp"
+  ]
+}
