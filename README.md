@@ -13,6 +13,11 @@ docpipe walks a directory of text, markdown and PDF files, hashes every file, sp
 | ![Grounded answer with citations, then a refusal](docs/img/grounded-answer.svg) | ![Ranked search with real hybrid and vector scores](docs/img/query-scores.svg) |
 | Grounded `answer` with citations, then a refusal on an unanswerable question. | Ranked search with real hybrid and vector scores. |
 
+The four panels above are real terminal output from a small three-document
+illustrative corpus (that is why they show 161 terms). The numbers quoted
+further down this README and in `EVIDENCE.md` come from the seeded
+16-document demo corpus in `tools/make_corpus.py`.
+
 ## Install
 
 ```
@@ -79,7 +84,7 @@ The authentication service mints short-lived bearer tokens and validates them. [
 It is stateless: tokens carry their own signature and expiry, so no token store [7c5fd260c427:0]
 POST /tokens [7c5fd260c427:0]
 POST /tokens/validate [7c5fd260c427:0]
-answer: grounded in 23 claim(s) across 5 chunk(s)
+answer: grounded in 9 claim(s) across 3 chunk(s)
 ```
 
 Every citation `[doc_id:chunk]` resolves to a chunk returned by the

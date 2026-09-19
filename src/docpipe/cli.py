@@ -158,7 +158,9 @@ def query_search(
         elif mode == "term":
             hits = search_module.term_search(conn, term, limit)
         else:
-            typer.echo(f"search: unknown mode '{mode}' (term, vector, hybrid)", err=True)
+            typer.echo(
+                f"search: unknown mode '{mode}' ({', '.join(search_module.VALID_MODES)})", err=True
+            )
             raise typer.Exit(2)
     finally:
         conn.close()
@@ -329,6 +331,11 @@ def run_eval(
     if not queries.exists():
         typer.echo(f"eval: error: query set not found: {queries}", err=True)
         raise typer.Exit(2)
+    if mode not in search_module.VALID_MODES:
+        typer.echo(
+            f"eval: unknown mode '{mode}' ({', '.join(search_module.VALID_MODES)})", err=True
+        )
+        raise typer.Exit(2)
     conn = connect_readonly(index)
     try:
         meta = query_module.read_meta(conn)
@@ -382,7 +389,9 @@ def answer(
         elif mode == "term":
             embedder = make_local_embedder()
         else:
-            typer.echo(f"answer: unknown mode '{mode}' (term, vector, hybrid)", err=True)
+            typer.echo(
+                f"answer: unknown mode '{mode}' ({', '.join(search_module.VALID_MODES)})", err=True
+            )
             raise typer.Exit(2)
         result = answer_module.answer(conn, query, embedder, mode=mode, k=k)
     finally:

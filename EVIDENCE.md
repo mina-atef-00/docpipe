@@ -4,7 +4,7 @@ The technical spec and verification record for docpipe. Every claim here
 comes from a real run. The README stays user-facing; this file holds the
 receipts.
 
-The run behind the current numbers is the 2026-09-18 re-run. 53 tests,
+The run behind the current numbers is the 2026-09-19 re-run. 61 tests,
 lint and type checks were all clean on that date.
 
 ## Full pipeline transcript
@@ -67,7 +67,8 @@ the disk check; exemptions are printed loudly, never hidden.
 
 ## Index schema
 
-SQLite, schema version 1:
+SQLite, schema version 2 (`meta.schema_version`, `SCHEMA_VERSION` in
+`src/docpipe/indexer.py`):
 
 ```
 documents (doc_id PK, rel_path, sha256, size, kind)
@@ -88,8 +89,12 @@ Build the index twice from the same manifest and chunk stream and hash the
 SQLite dump of each. The two hashes match. One practical detail, because it
 will bite anyone reproducing this: the dump can only be read with the
 sqlite-vec extension loaded, since the index contains a vec0 virtual table.
-Without it, `iterdump()` fails with `no such module: vec0`. With it loaded,
-from the 2026-09-18 re-run:
+Without it, `iterdump()` fails with `no such module: vec0`.
+
+The exact recipe matters, so here it is: `lines = list(conn.iterdump())`,
+then `sha256("\n".join(lines).encode()).hexdigest()` — joined with a single
+newline, no trailing newline. From the 2026-09-18 re-run, and re-confirmed
+on the 2026-09-19 re-run:
 
 ```
 /tmp/docpipe_a.sqlite 86e5ca6412fd76f26ca5e6a0095a795f5aabdece83ef8d9a1822da7228556598
@@ -100,12 +105,25 @@ Scope of the claim. The matching dump hashes cover the relational layers
 of the index: documents, chunks, terms and the run record. The vector
 blobs in the vec0 table are kept stable by the build's chunk_id insert
 ordering rather than by this hash check, so vector-layer determinism is by
-construction, not independently hashed. And one input is not deterministic
-at all: regenerating the corpus from seed 20260918 reproduces the 14 text
-and markdown files exactly, but `architecture.pdf` hashes differently on
-every regeneration because pymupdf embeds metadata at save time. So a
-clean-seed rebuild reproduces the term layer and every committed eval and
-query number, but not the PDF document's own hash or its chunk's vector.
+construction, not independently hashed. Determinism is also scoped to *one
+manifest and one chunk stream*: it says nothing about reproducing those
+inputs from the seed. And one input is not deterministic at all:
+regenerating the corpus from seed 20260918 reproduces the 14 text and
+markdown files exactly, but `architecture.pdf` hashes differently on every
+regeneration, because pymupdf writes a random PDF file identifier (`/ID` in
+the trailer, 59 bytes of the 1672-byte file) at save time. The document's
+own bytes and metadata are otherwise identical.
+
+What follows from that: a clean-seed rebuild reproduces the term layer and
+every committed eval and query number (verified: recall@5 1.0,
+precision@5 0.2, mrr 0.910714 with the same per-query ranks), but it does
+*not* reproduce the PDF's own hash, its chunk's vector, `manifest.json`'s
+hash, or `runs.run_id` / `meta.run_id`, since all of those are derived from
+the PDF bytes. A committed `index.sqlite` carries
+`run_id 397507a7e5895550891cbe2a2ffdb6576bf56c03ca3831224f0539ac49f5e723`;
+a fresh clean-seed rebuild carries
+`run_id e615063308816cf625922bdc82e4e1c0cd354153afcdacced2f14dff21799918`.
+Compare run ids only between builds of the same manifest and chunk stream.
 
 ## Embedding layer
 
@@ -239,6 +257,19 @@ docpipe index --manifest manifest.json --chunks chunks.jsonl --out index.sqlite
 docpipe eval --index index.sqlite --queries eval_queries.json --k 5 --mode hybrid
 ```
 
+Two things about that recipe, both verified on 2026-09-19:
+
+- `eval_queries.json` is generated, not committed (it is in `.gitignore`
+  alongside the corpus and index). The first command above writes it, because
+  `tools/make_corpus.py` defaults `--queries-out` to `eval_queries.json`. A
+  clone cannot run `docpipe eval` until that command has run; without it the
+  CLI exits 2 with `eval: error: query set not found`.
+- `baseline_metrics.json` *is* committed, so `--check` needs either the repo
+  root as the working directory or an explicit `--baseline <path>`.
+
+Re-run end to end on 2026-09-19 in a clean temporary directory, the recipe
+above reproduces the numbers below exactly, including every per-query rank.
+
 Real output of that run (the committed baseline in
 `baseline_metrics.json`, produced by the local lexical embedder, hybrid
 mode, k=5, 14 labelled queries):
@@ -273,6 +304,14 @@ eval: gate PASS - metrics at or above baseline_metrics.json
 `--check` compares the three metrics against `baseline_metrics.json`
 (`--baseline` overrides the path). Any metric below baseline by more than a
 tiny tolerance prints the regression and exits 1.
+
+An unrecognised `--mode` is rejected before any search runs: `docpipe eval
+--mode <typo>` prints `eval: unknown mode '<typo>' (term, vector, hybrid)`
+and exits 2. This is enforced in `run_search` itself (it raises
+`ValueError`) as well as at the CLI, so a caller cannot report term-search
+metrics under a different mode's label. `docpipe query search` and
+`docpipe answer` behave the same way, and the API restricts `mode` to the
+same three values at the request schema.
 
 ## Answer eval
 
@@ -310,9 +349,12 @@ and recall are both 1.0 with zero refusals
 
 ## Construction caveats
 
-- `architecture.pdf` is not byte-reproducible from the seed (pymupdf
-  metadata at save time). The seed rebuild reproduces the 14 text and
-  markdown files exactly.
+- `architecture.pdf` is not byte-reproducible from the seed: pymupdf writes
+  a random PDF file identifier (`/ID`) into the trailer on every save, so the
+  file differs in 59 bytes of 1672. The seed rebuild reproduces the 14 text
+  and markdown files exactly. Everything derived from the PDF bytes
+  (`manifest.json`'s hash, the PDF's `doc_id`, `run_id`) therefore also
+  differs between clean-seed builds.
 - Vector-layer determinism in the index build is by construction (chunk_id
   insert ordering), not independently hash-verified.
 - The SQLite dump for determinism checks requires the sqlite-vec extension
@@ -323,7 +365,8 @@ and recall are both 1.0 with zero refusals
 
 ## Test and lint record
 
-On 2026-09-18, from a clean state: 53 tests passed (`pytest -q`), ruff
-check and format check were clean, and mypy reported no issues in 18
+On 2026-09-19, from a clean state: 61 tests passed (`pytest -q`), ruff
+check and format check were clean, and mypy reported no issues in 19
 source files. CI runs these on push and pull request via
-`.github/workflows/ci.yml`.
+`.github/workflows/ci.yml` (the workflow runs exactly `ruff check .`,
+`ruff format --check .`, `mypy`, `pytest -q`).

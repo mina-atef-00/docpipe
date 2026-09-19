@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -191,3 +192,34 @@ def test_hybrid_scores_between_zero_and_one(pipeline: tuple[Path, Path, Path, Pa
         conn.close()
     assert hits
     assert all(0.0 - 1e-6 <= hit["score"] <= 1.0 + 1e-6 for hit in hits)
+
+
+def test_run_search_rejects_unknown_mode(pipeline: tuple[Path, Path, Path, Path]) -> None:
+    """An unknown mode must raise, never silently downgrade to term search."""
+    _corpus, _m, _c, index = pipeline
+    conn = connect_readonly(index)
+    try:
+        embedder = make_local_embedder()
+        with pytest.raises(ValueError, match="unknown search mode"):
+            search_module.run_search(conn, "alpha beta", "banana", embedder, limit=5)
+    finally:
+        conn.close()
+
+
+def test_eval_cli_rejects_unknown_mode(pipeline: tuple[Path, Path, Path, Path]) -> None:
+    """``docpipe eval --mode <typo>`` must exit 2, not report term-search numbers."""
+    from typer.testing import CliRunner
+
+    from docpipe.cli import app
+
+    _corpus, _manifest, _chunks, index = pipeline
+    queries = index.parent / "queries.json"
+    queries.write_text(
+        json.dumps({"queries": [{"query": "alpha beta", "rel_doc": "a/one.md"}]}), encoding="utf-8"
+    )
+    result = CliRunner().invoke(
+        app, ["eval", "--index", str(index), "--queries", str(queries), "--mode", "banana"]
+    )
+    assert result.exit_code == 2
+    assert "unknown mode" in result.output
+    assert "recall" not in result.output

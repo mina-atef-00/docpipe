@@ -30,6 +30,7 @@ _BM25_K1 = 1.5
 _BM25_B = 0.75
 _DEFAULT_ALPHA = 0.5
 _CANDIDATE_MULTIPLIER = 4
+VALID_MODES = ("term", "vector", "hybrid")
 
 
 def _snip(text: str, radius: int = 60) -> str:
@@ -235,9 +236,16 @@ def run_search(
     limit: int = 20,
     alpha: float = _DEFAULT_ALPHA,
 ) -> list[dict[str, Any]]:
-    """Dispatch a search in ``term``, ``vector`` or ``hybrid`` mode."""
+    """Dispatch a search in ``term``, ``vector`` or ``hybrid`` mode.
+
+    An unrecognised mode is a hard error, never a downgrade. The whole point of
+    this project is that there is no silent path: a typo in a caller's mode must
+    not quietly become a term search and report a number under the wrong label.
+    """
+    if mode == "term":
+        return term_search(conn, text, limit)
     if mode == "vector":
         return vector_search_query(conn, text, embedder, limit)
     if mode == "hybrid":
         return hybrid_search(conn, text, embedder, limit, alpha)
-    return term_search(conn, text, limit)
+    raise ValueError(f"unknown search mode {mode!r} (expected one of {', '.join(VALID_MODES)})")
